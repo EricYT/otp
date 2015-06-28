@@ -4,23 +4,29 @@ import (
   "fmt"
   "time"
   "errors"
-  "reflect"
+//  "reflect"
 )
 
 var debugPrefixGenServer = "++++++++++(gen_server)++++++++++++> GenServer debug:"
 
 // Genserver interface
 type gsModIf interface {
-  Init() error
+  Init() (string, interface{}, error)
 
   // handle call message
-  HandleCall(args interface{}) (interface{}, error)
+  HandleCall(args interface{}) (string, interface{}, error)
 
   // handle cast info
-  HandleInfo(args interface{}) error
+  HandleInfo(args interface{}) (string, int, error)
+
+  // stop
+  Stop(string) error
+
+  // terminate
+  Terminate(string)
 
   // Debug interface
-  HandleMessage(interface{}) (interface{}, error)
+  HandleMessage(interface{}) (string, interface{}, error)
 }
 
 
@@ -65,15 +71,30 @@ func (gs *GenServer) Start() error {
 
 func (gs *GenServer) InitIt() error {
   fmt.Println(debugPrefixGenServer, "gen_server init ")
-  err := gs.gsMod.Init()
+  state, timeout, err := gs.gsMod.Init()
   if err != nil {
     fmt.Println(debugPrefixGenServer, "gen_server error:", err)
     return err
   }
 
-  // receive message
-  go gs.loop()
+  switch state {
+  case STOP:
+    return nil
+  }
 
+  // receive message
+  go gs.loop(timeout)
+
+  return nil
+}
+
+func (gs *GenServer) Stop(reason string) error {
+  fmt.Println(debugPrefixGenServer, "gen_server stop")
+  err := gs.gsMod.Stop(reason)
+  if err != nil {
+    fmt.Println(debugPrefixGenServer, "gen_server stop error:", err)
+    return err
+  }
   return nil
 }
 
@@ -110,26 +131,125 @@ func (gs *GenServer) Debug(debugMsg interface{}) {
   gs.castMsg<-debugMsg
 }
 
-func (gs *GenServer) loop() {
+func (gs *GenServer) loop(to interface{}) {
   fmt.Println(debugPrefixGenServer, "gen_server loop: ", time.Now())
-  select {
-  case callMsg := <-gs.callMsg:
-    fmt.Println(debugPrefixGenServer, "Recevie call message :", time.Now())
-    res, err := gs.gsMod.HandleCall(callMsg)
-    if err != nil {
-      fmt.Println(debugPrefixGenServer, "Recevie call error:", err, time.Now())
-      return
+  switch to.(type) {
+  case int:
+    fmt.Println(debugPrefixGenServer, "loop timeout:", to.(int))
+    select {
+    case callMsg := <-gs.callMsg:
+      fmt.Println(debugPrefixGenServer, "Recevie call message :", time.Now())
+      state, res, err := gs.gsMod.HandleCall(callMsg)
+      if err != nil {
+        fmt.Println(debugPrefixGenServer, "Recevie call error:", err, time.Now())
+        return
+      }
+
+      // switch state
+      fmt.Println(debugPrefixGenServer, "gen_server state:", state)
+      switch state {
+      case REPLY:
+        fmt.Println(debugPrefixGenServer, "gen_server reply")
+        // TODO
+        gs.result<-res
+        gs.loop(to)
+      case NOREPLY:
+        fmt.Println(debugPrefixGenServer, "gen_server noreply")
+        // TODO
+        gs.loop(to)
+      case STOP:
+        fmt.Println(debugPrefixGenServer, "gen_server stop")
+        // TODO
+        gs.terminate(NORMAL)
+      }
+    case castMsg := <-gs.castMsg:
+      fmt.Println(debugPrefixGenServer, "Recevie cast message :", time.Now())
+
+      state, timeout, err := gs.gsMod.HandleInfo(castMsg)
+      if err != nil {
+        fmt.Println(debugPrefixGenServer, "Recevie cast error:", err, time.Now())
+        return
+      }
+
+      // switch state
+      fmt.Println(debugPrefixGenServer, "gen_server state:", state, timeout)
+      switch state {
+      case STOP:
+        fmt.Println(debugPrefixGenServer, "gen_server stop")
+        // TODO
+        gs.terminate(NORMAL)
+      }
+      gs.loop(timeout)
+    case <-time.After(time.Millisecond * time.Duration(to.(int))):
+      fmt.Println(debugPrefixGenServer, "Recevie timeout message ", time.Now())
+
+      state, timeout, err := gs.gsMod.HandleInfo(TIMEOUT)
+      if err != nil {
+        fmt.Println(debugPrefixGenServer, "Recevie cast error:", err, time.Now())
+        return
+      }
+
+      // switch state
+      fmt.Println(debugPrefixGenServer, "gen_server timeout state:", state, timeout)
+      switch state {
+      case STOP:
+        fmt.Println(debugPrefixGenServer, "gen_server timeout stop")
+        // TODO
+        gs.terminate(NORMAL)
+      }
+      gs.loop(timeout)
     }
-    gs.result<-res
-    gs.loop()
-  case castMsg := <-gs.castMsg:
-    fmt.Println(debugPrefixGenServer, "Recevie cast message :", time.Now())
-    gs.gsMod.HandleInfo(castMsg)
-    gs.loop()
-  case <-time.After(time.Millisecond * 1):
-    fmt.Println(debugPrefixGenServer, "Recevie timeout message ", time.Now())
-    gs.gsMod.HandleInfo(TIMEOUT)
-    gs.loop()
+  case string, nil:
+    fmt.Println(debugPrefixGenServer, "loop not timeout")
+    select {
+    case callMsg := <-gs.callMsg:
+      fmt.Println(debugPrefixGenServer, "Recevie call message :", time.Now())
+      state, res, err := gs.gsMod.HandleCall(callMsg)
+      if err != nil {
+        fmt.Println(debugPrefixGenServer, "Recevie call error:", err, time.Now())
+        return
+      }
+
+      // switch state
+      fmt.Println(debugPrefixGenServer, "gen_server state:", state)
+      switch state {
+      case REPLY:
+        fmt.Println(debugPrefixGenServer, "gen_server reply")
+        // TODO
+        gs.result<-res
+        gs.loop(to)
+      case NOREPLY:
+        fmt.Println(debugPrefixGenServer, "gen_server noreply")
+        // TODO
+        gs.loop(to)
+      case STOP:
+        fmt.Println(debugPrefixGenServer, "gen_server stop")
+        // TODO
+        gs.terminate(NORMAL)
+      }
+    case castMsg := <-gs.castMsg:
+      fmt.Println(debugPrefixGenServer, "Recevie cast message :", time.Now())
+
+      state, timeout, err := gs.gsMod.HandleInfo(castMsg)
+      if err != nil {
+        fmt.Println(debugPrefixGenServer, "Recevie cast error:", err, time.Now())
+        return
+      }
+
+      // switch state
+      fmt.Println(debugPrefixGenServer, "gen_server state:", state, timeout)
+      switch state {
+      case STOP:
+        fmt.Println(debugPrefixGenServer, "gen_server stop")
+        // TODO
+        gs.terminate(NORMAL)
+      }
+      gs.loop(timeout)
+    }
   }
 }
 
+func (gs *GenServer) terminate(reason string) {
+  fmt.Println(debugPrefixGenServer, "gen_server stoop:")
+  gs.gsMod.Terminate(reason)
+}

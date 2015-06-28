@@ -13,27 +13,36 @@ type test struct {
   *otp.GenServer
 }
 
-func (t *test) Init() error {
+func (t *test) Init() (string, interface{}, error) {
   fmt.Println(debugTest, "test init")
-  return nil
+  return otp.NORMAL, 1000, nil
 }
 
-func (t *test) HandleMessage(message interface{}) (interface{}, error) {
+func (t *test) HandleMessage(message interface{}) (string, interface{}, error) {
   fmt.Println(debugTest, "test handle message:", message.(string))
   t.name = message.(string)
-  return message, nil
+  return otp.NOREPLY, message, nil
 }
 
-func (t *test) HandleCall(msg interface{}) (interface{}, error) {
+func (t *test) HandleCall(msg interface{}) (string, interface{}, error) {
   fmt.Println(debugTest, "test handle call")
-  time.Sleep(time.Second*2)
-  return msg, nil
+  time.Sleep(time.Second*3)
+  return otp.REPLY, msg, nil
 }
 
-func (t *test) HandleInfo(msg interface{}) error {
+func (t *test) HandleInfo(msg interface{}) (string, int, error) {
   fmt.Println(debugTest, "test handle cast")
-  time.Sleep(time.Second*2)
+  return otp.NOREPLY, 2000, nil
+}
+
+func (t *test) Stop(reason string) error {
+  fmt.Println(debugTest, "test handle stop")
   return nil
+}
+
+func (t *test) Terminate(reason string) {
+  fmt.Println(debugTest, "test handle terminate:", reason)
+  return
 }
 
 func main() {
@@ -52,14 +61,13 @@ func main() {
 
   //res, err := genServer.Call("gen_server call", 4000)
   //res, err := genServer.Call("gen_server call", otp.INFINITY)
-  res, err := genServer.Call("gen_server call", nil)
+  fmt.Println(debugTest, "test start call :")
+  res, err := genServer.Call("(foo call)", nil)
   if err != nil {
     fmt.Println(debugTest, "test call error:", err)
     return
   }
   fmt.Println(debugTest, "test call result:", res.(string), time.Now())
-
-  fmt.Println(debugTest, "test name", t.name)
 
   stop := make(chan string, 1)
   go func() {
